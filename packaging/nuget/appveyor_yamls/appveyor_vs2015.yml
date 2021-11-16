@@ -1,0 +1,67 @@
+version: 1.8.0-post{build}
+pull_requests:
+  do_not_increment_build_number: true
+image: Visual Studio 2015
+configuration: Release
+environment:
+  runtime: v140
+  matrix:
+    - platform: x64
+      arch: x64
+    - platform: win32
+      arch: x86
+install:
+  - ps: "& .\\win32\\install-coapp.ps1"
+    # Update vcpkg (is outdated on the VS 2015 image)
+  - cmd: |
+      cd "C:\Tools\vcpkg"
+      git pull -q
+      .\bootstrap-vcpkg.bat
+      cd %appveyor_build_folder%
+cache:
+  - c:\tools\vcpkg\installed
+  - C:\Users\appveyor\AppData\Local\vcpkg\archives
+  - C:\Users\appveyor\AppData\Local\vcpkg\installed
+nuget:
+  account_feed: true
+  project_feed: true
+  disable_publish_on_pr: true
+before_build:
+  - cmd: vcpkg --feature-flags=versions install --triplet %arch%-windows
+build:
+  project: win32/librdkafka.sln
+  publish_nuget: true
+  publish_nuget_symbols: true
+  include_nuget_references: true
+  parallel: true
+  verbosity: normal
+after_build:
+  - cmd: mkdir "packaging/nuget/dl-6f/p-librdkafka__bld-appveyor__plat-windows__arch-%platform%__bldtype-%configuration%__tag-6f__sha-%APPVEYOR_REPO_COMMIT%"
+test_script:
+  - cmd: cd tests && ..\win32\outdir\%runtime%\%PLATFORM%\%CONFIGURATION%\tests.exe -l -Q -p1 && cd ..
+artifacts:
+  - path: '*.nupkg'
+    name: Packages
+deploy_script:
+  - ps: >-
+
+    $dir = 'p-librdkafka__bld-appveyor__plat-windows__arch-{0}__bldtype-{1}__tag-6f__sha-{2}' -f $env:PLATFORM,$env:CONFIGURATION,$env:APPVEYOR_REPO_COMMIT
+
+    Write-Host "$dir"
+
+    $autopkgFile = "win32/librdkafka.autopkg"
+
+    cat ($autopkgFile + ".template") | % { $_ -replace "@version", $env:appveyor_build_version } > $autopkgFile
+
+    Write-NuGetPackage $autopkgFile
+
+    Get-ChildItem .\*.nupkg | Copy-Item -Destination ".\packaging\nuget\dl-6f\$dir" -Force -PassThru
+
+    Set-Location -Path .\packaging\nuget -PassThru
+
+    Get-ChildItem "dl-6f\$dir\"
+
+    7z a "$dir.zip" ".\dl-6f\$dir\*"
+
+    Get-ChildItem .\*.zip | % { Push-AppveyorArtifact $_.FullName -FileName $_.Name }
+
